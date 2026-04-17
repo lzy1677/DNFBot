@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.Python
+
+# Logs
+logs/
+*.log
+
+# 测试截图
+tests/captures/
+
+# YOLO 模型权重（大文件，走 LFS 或手动分发）
+vision/models/*.pt
+vision/models/*.onnx
+vision/models/*.engine
+!vision/models/.gitkeep
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Claude Code 本地设置
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 训练数据集
+datasets/
+runs/

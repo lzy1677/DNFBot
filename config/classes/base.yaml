@@ -1,0 +1,6 @@
+# 职业配置基础模板，子配置可通过 extends: base.yaml 继承
+keys:
+  attack: x
+  jump: c
+  pickup: z
+  # 基础 buff/主动技能占位，子职业覆盖

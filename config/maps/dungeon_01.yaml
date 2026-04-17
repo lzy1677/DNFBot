@@ -1,0 +1,39 @@
+extends: base.yaml
+name: 格兰之森
+start_id: 0
+optimal_path: [0, 1, 3, 5]
+rooms:
+  - id: 0
+    type: start
+    name: 入口
+    connections:
+      - {id: 1, dir: right}
+  - id: 1
+    type: normal
+    name: 林间
+    connections:
+      - {id: 0, dir: left}
+      - {id: 2, dir: up}
+      - {id: 3, dir: right}
+  - id: 2
+    type: normal
+    name: 北侧
+    connections:
+      - {id: 1, dir: down}
+  - id: 3
+    type: elite
+    name: 精英房
+    connections:
+      - {id: 1, dir: left}
+      - {id: 4, dir: up}
+      - {id: 5, dir: right}
+  - id: 4
+    type: hidden
+    name: 隐藏房
+    connections:
+      - {id: 3, dir: down}
+  - id: 5
+    type: boss
+    name: Boss
+    connections:
+      - {id: 3, dir: left}

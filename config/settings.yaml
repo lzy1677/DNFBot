@@ -1,0 +1,34 @@
+# 全局设置
+logging:
+  level: INFO
+  file: logs/bot.log
+
+capture:
+  backend: auto          # auto | dxcam | mss
+  target_fps: 60
+  # region: [0, 0, 1280, 720]  # 若使用固定分辨率窗口，可取消注释
+  window_title: "地下城与勇士"  # 按窗口标题自动定位（找不到时回退为全屏）
+
+detector:
+  model_path: vision/models/dnf_v1.pt
+  conf_threshold: 0.45
+  iou_threshold: 0.45
+  imgsz: 640
+  device: null           # null 自动 / "cuda:0" / "cpu"
+
+bot:
+  loop_hz: 20            # 目标主循环频率
+  safety_key: F12        # 紧急停止热键
+  character_class: berserker
+  map: dungeon_01
+
+state_parser:
+  # 状态判定用到的类别名（需要与训练数据对齐）
+  monster_classes: [monster, elite, boss]
+  item_classes: [item, gold]
+  portal_classes: [portal, portal_hidden, portal_boss]
+  player_class: player
+  ui_classes: [retry_button, confirm_button]
+  clear_flag: room_clear
+  # 至少 N 帧同一状态才确认切换，防抖
+  confirm_frames: 3

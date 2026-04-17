@@ -1,0 +1,14 @@
+extends: base.yaml
+name: 元素师
+keys:
+  attack: x
+  jump: c
+  pickup: z
+  skill_1: {key: a, cooldown: 4.0, priority: 3, desc: 水之轻灵}
+  skill_2: {key: s, cooldown: 7.0, priority: 2, desc: 暗之气息}
+  skill_3: {key: d, cooldown: 12.0, priority: 4, desc: 元素爆发}
+  awakening: {key: f, cooldown: 60.0, priority: 5, desc: 元素风暴}
+  buff_1: {key: q, cooldown: 180.0, priority: -1, desc: 元素灌注}
+combo_chains:
+  - [skill_1, attack]
+  - [skill_2, skill_3]

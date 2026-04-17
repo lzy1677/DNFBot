@@ -1,0 +1,5 @@
+# 地图基础模板
+# rooms[].connections 可以是纯 id 列表或 [{id: X, dir: right}]
+start_id: 0
+optimal_path: []
+rooms: []

@@ -1,0 +1,15 @@
+extends: base.yaml
+name: 狂战士
+keys:
+  attack: x
+  jump: c
+  pickup: z
+  skill_1: {key: a, cooldown: 5.0, priority: 3, desc: 崩山击}
+  skill_2: {key: s, cooldown: 8.0, priority: 2, desc: 怒气爆发}
+  skill_3: {key: d, cooldown: 15.0, priority: 4, desc: 暴风式十字斩}
+  awakening: {key: f, cooldown: 60.0, priority: 5, desc: 血之狂暴}
+  buff_1: {key: q, cooldown: 180.0, priority: -1, desc: 血气之刃}
+combo_chains:
+  - [attack, attack, skill_1]
+  - [jump, attack, skill_2]
+  - [skill_3, skill_1]
