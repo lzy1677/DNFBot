@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .room import Room, RoomType
 
@@ -15,6 +15,10 @@ class BaseMap:
     start_id: int = 0
     optimal_path: List[int] = field(default_factory=list)
     current_id: int = 0
+    # 小地图检测配置（来自 YAML minimap 节点）
+    minimap_cfg: Dict[str, Any] = field(default_factory=dict)
+    # 各房间在小地图中的归一化坐标 {room_id: (x, y)}
+    room_minimap_xy: Dict[int, Tuple[float, float]] = field(default_factory=dict)
 
     # ---- 构造 ----
     def add_room(self, room: Room) -> None:
@@ -88,3 +92,12 @@ class BaseMap:
     def set_current(self, rid: int) -> None:
         if rid in self.rooms:
             self.current_id = rid
+
+    def sync_from_minimap(self, detected_id: int) -> bool:
+        """小地图检测到的房间与当前记录不符时强制修正。返回 True 表示发生了修正。"""
+        if detected_id not in self.rooms:
+            return False
+        if detected_id == self.current_id:
+            return False
+        self.current_id = detected_id
+        return True

@@ -91,10 +91,17 @@ _SCAN = {
     "f11": 0x57, "f12": 0x58,
     # 方向键（扩展键）
     "up": 0xC8, "left": 0xCB, "right": 0xCD, "down": 0xD0,
+    # 编辑区扩展键
+    "page_up": 0xC9, "page_down": 0xD1,
+    "home": 0xC7, "end": 0xCF,
+    "insert": 0xD2, "delete": 0xD3,
 }
 
 # 需要带 EXTENDEDKEY 标志的扩展键
-_EXTENDED = {"up", "down", "left", "right", "enter"}
+_EXTENDED = {
+    "up", "down", "left", "right", "enter",
+    "page_up", "page_down", "home", "end", "insert", "delete",
+}
 
 
 def _key_scan(key: str) -> Tuple[int, bool]:

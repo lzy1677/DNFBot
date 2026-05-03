@@ -19,6 +19,10 @@ def main() -> int:
     ap.add_argument("--settings", default="config/settings.yaml")
     ap.add_argument("--dry-run", action="store_true",
                     help="只初始化，不进入主循环（自检用）")
+    ap.add_argument("--verbose", "-v", action="store_true",
+                    help="DEBUG 级别日志：显示每帧耗时、检测结果、动作队列详情")
+    ap.add_argument("--skip-dungeon", action="store_true",
+                    help="跳过进城/进本流程，直接从 IN_ROOM 状态启动（已在副本内时使用）")
     args = ap.parse_args()
 
     settings = Path(args.settings)
@@ -27,8 +31,10 @@ def main() -> int:
         return 2
 
     log = get_logger("main")
+    log.info("加载配置: %s", settings)
 
-    bot = GameBot.from_settings(settings)
+    bot = GameBot.from_settings(settings, verbose=args.verbose,
+                                skip_dungeon=args.skip_dungeon)
     signal.signal(signal.SIGINT, lambda *_: bot.stop())
     try:
         signal.signal(signal.SIGTERM, lambda *_: bot.stop())

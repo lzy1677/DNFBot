@@ -19,6 +19,7 @@ vision/models/*.pt
 vision/models/*.onnx
 vision/models/*.engine
 !vision/models/.gitkeep
+data/
 
 # IDE
 .idea/
@@ -35,3 +36,5 @@ Thumbs.db
 # 训练数据集
 datasets/
 runs/
+
+set_env.ps1

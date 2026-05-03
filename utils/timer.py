@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 class Cooldown:
     """冷却计时器。`ready()` 判断是否可用，`trigger()` 刷新时间戳。"""
     duration: float
-    last_used: float = field(default=0.0)
+    last_used: float = field(default=float("-inf"))
 
     def ready(self) -> bool:
         return (time.perf_counter() - self.last_used) >= self.duration
@@ -21,7 +21,7 @@ class Cooldown:
         self.last_used = time.perf_counter()
 
     def reset(self) -> None:
-        self.last_used = 0.0
+        self.last_used = float("-inf")
 
 
 @dataclass

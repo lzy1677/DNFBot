@@ -23,6 +23,7 @@ def load_map(path: str | Path) -> BaseMap:
         name=cfg.get("name", "unnamed"),
         start_id=int(cfg.get("start_id", 0)),
         optimal_path=list(cfg.get("optimal_path", [])),
+        minimap_cfg=cfg.get("minimap", {}),
     )
     for r in cfg.get("rooms", []):
         rtype = RoomType(r.get("type", "normal"))
@@ -39,9 +40,13 @@ def load_map(path: str | Path) -> BaseMap:
             connections=conns,
             name=r.get("name", ""),
         )
-        # 附加方向映射（BaseMap.direction_to 会读）
         setattr(room, "direction_map", dir_map)
         m.add_room(room)
+
+        # 加载房间的小地图归一化坐标
+        xy = r.get("minimap_xy")
+        if xy and len(xy) == 2:
+            m.room_minimap_xy[int(r["id"])] = (float(xy[0]), float(xy[1]))
 
     m.set_current(m.start_id)
     return m

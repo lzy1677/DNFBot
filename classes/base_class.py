@@ -13,14 +13,16 @@ from utils.config import load_with_base
 
 @dataclass
 class CombatContext:
-    """战斗决策所需信息。"""
+    """战斗决策所需信息（2.5D 四方向）。"""
     monster_boxes: List[Tuple[int, int, int, int]] = field(default_factory=list)
     player_box: Optional[Tuple[int, int, int, int]] = None
     boss_present: bool = False
-    # 玩家相对怪群的方向：'left' | 'right'
+    # 水平方向：'left' | 'right'
     approach_direction: str = "right"
-    # 估计的水平距离（像素）
     distance_px: int = 0
+    # 垂直方向：'up' | 'down' | ''（已对齐时为空）
+    approach_y_direction: str = ""
+    distance_y_px: int = 0
 
 
 class BaseClass(ABC):

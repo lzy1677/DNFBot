@@ -15,12 +15,14 @@ def setup_logging(
     log_file: Optional[str] = None,
     fmt: str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 ) -> None:
+    """初始化日志。重复调用只更新级别，不重复添加 handler。"""
     global _CONFIGURED
-    if _CONFIGURED:
-        return
 
     root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
+
+    if _CONFIGURED:
+        return
 
     formatter = logging.Formatter(fmt, datefmt="%H:%M:%S")
 

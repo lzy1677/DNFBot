@@ -2,6 +2,7 @@
 logging:
   level: INFO
   file: logs/bot.log
+  verbose: false   # true = DEBUG 级别（等同于命令行 --verbose）
 
 capture:
   backend: auto          # auto | dxcam | mss
@@ -23,12 +24,11 @@ bot:
   map: dungeon_01
 
 state_parser:
-  # 状态判定用到的类别名（需要与训练数据对齐）
-  monster_classes: [monster, elite, boss]
-  item_classes: [item, gold]
-  portal_classes: [portal, portal_hidden, portal_boss]
+  # 当前模型类别：monster / stone / item / portal / player / ui_button
+  monster_classes: [monster, stone]
+  item_classes: [item]
+  portal_classes: [portal]
   player_class: player
-  ui_classes: [retry_button, confirm_button]
-  clear_flag: room_clear
+  ui_classes: [ui_button]
   # 至少 N 帧同一状态才确认切换，防抖
   confirm_frames: 3

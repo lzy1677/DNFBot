@@ -3,7 +3,7 @@ name: 狂战士
 keys:
   attack: x
   jump: c
-  pickup: z
+  pickup: x
   skill_1: {key: a, cooldown: 5.0, priority: 3, desc: 崩山击}
   skill_2: {key: s, cooldown: 8.0, priority: 2, desc: 怒气爆发}
   skill_3: {key: d, cooldown: 15.0, priority: 4, desc: 暴风式十字斩}

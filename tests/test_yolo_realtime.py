@@ -157,8 +157,10 @@ def draw_hud(
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default="yolov8n.pt",
-                    help="YOLO 权重路径（未训练时可用 yolov8n.pt 烟测）")
+    ap.add_argument("--model",
+                    # default="runs/detect/train/runs/yolov8n/weights/best.pt",
+                    default="runs/detect/train/runs/yolov8n2/weights/best.pt",
+                    help="YOLO 权重路径")
     ap.add_argument("--region", type=parse_region, default=None,
                     help="截图区域 left,top,right,bottom")
     ap.add_argument("--window", default=None,
@@ -167,6 +169,10 @@ def main() -> int:
     ap.add_argument("--iou", type=float, default=0.45)
     ap.add_argument("--imgsz", type=int, default=640)
     ap.add_argument("--device", default=None, help="'cuda:0' / 'cpu' / None")
+    ap.add_argument("--half", action="store_true", default=True,
+                    help="FP16 推理，NVIDIA GPU 上约 2x 提速（默认开启）")
+    ap.add_argument("--no-half", dest="half", action="store_false",
+                    help="关闭 FP16（CPU 推理时需要加此选项）")
     ap.add_argument("--backend", default="auto", choices=["auto", "dxcam", "mss"])
     ap.add_argument("--target-fps", type=int, default=60)
     ap.add_argument("--max-width", type=int, default=1280,
@@ -185,17 +191,16 @@ def main() -> int:
         print(f"[warn] 模型文件 {args.model} 不存在，"
               f"ultralytics 会尝试从网络下载（仅适用于官方权重如 yolov8n.pt）")
 
-    print("[info] 初始化 YOLO ...")
+    print("[info] 初始化 YOLO（含 warmup）...")
     detector = YOLODetector(
         model_path=args.model,
         conf_threshold=args.conf,
         iou_threshold=args.iou,
         device=args.device,
         imgsz=args.imgsz,
+        half=args.half,
     )
     print(f"[info] 类别: {detector.names}")
-    print("[info] warmup ...")
-    detector.warmup(args.imgsz)
 
     print("[info] 初始化截图 ...")
     capture = ScreenCapture(
@@ -233,7 +238,7 @@ def main() -> int:
                     time.sleep(0.02)
                     continue
 
-            infer_ms = detector.last_infer_time * 1000
+            infer_ms = detector.last_infer_ms
             display = last_frame.copy()
             display = draw_detections(display, last_dets, show_center=True)
 

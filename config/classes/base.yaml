@@ -2,5 +2,5 @@
 keys:
   attack: x
   jump: c
-  pickup: z
+  pickup: x
   # 基础 buff/主动技能占位，子职业覆盖

@@ -120,7 +120,10 @@ class ActionQueue:
             actions = [actions]
         with self._cv:
             self._q.extend(actions)
+            q_size = len(self._q)
             self._cv.notify()
+        tags = [a.tag or type(a).__name__ for a in actions]
+        log.debug("[queue] +%d: %s  (队列 %d)", len(actions), tags, q_size)
 
     def clear(self) -> None:
         with self._cv:
@@ -145,10 +148,15 @@ class ActionQueue:
                 action = self._q.popleft()
                 self._current = action
 
+            tag = action.tag or type(action).__name__
+            log.debug("[action] ▶ %s", tag)
+            t0 = time.perf_counter()
             try:
                 action.execute(self.driver)
+                log.debug("[action] ✓ %s (%.0fms)",
+                          tag, (time.perf_counter() - t0) * 1000)
             except Exception as e:
-                log.warning("action %s failed: %s", action.tag or type(action).__name__, e)
+                log.warning("[action] ✗ %s: %s", tag, e)
             finally:
                 with self._lock:
                     self._current = None

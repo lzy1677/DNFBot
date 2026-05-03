@@ -1,39 +1,99 @@
 extends: base.yaml
-name: 格兰之森
+name: 格蓝迪发电站
 start_id: 0
-optimal_path: [0, 1, 3, 5]
+optimal_path: [0, 1, 2, 3, 6, 7, 8]
+
+# 小地图检测配置
+minimap:
+  # 小地图内容区在游戏帧中的位置（归一化，以帧宽高为基准）
+  # 基于 1456×816 截图实测：x=[1320,1450] y=[33,125]
+  # 若分辨率/UI缩放变化，此区域会被 HSV 蓝色检测自动修正
+  screen_region: [0.926, 0.078, 0.994, 0.170]
+  # 已探索房间的 HSV 范围（亮青蓝色方块）—— 用于自动定位小地图边界
+  room_hsv_lower: [90, 80, 80]
+  room_hsv_upper: [130, 255, 255]
+  # 玩家标记的 HSV 范围（蓝色泪滴，比房间色更饱和）
+  player_hsv_lower: [95, 150, 150]
+  player_hsv_upper: [120, 255, 255]
+
 rooms:
+  # minimap_xy: [x, y]，归一化到小地图内容区宽高（0.0~1.0）
+  # 布局网格（4列×3行）：
+  #   Col:  0     1     2     3
+  #   Row0: [0]--[1]--[2]
+  #                    |
+  #   Row1:      [4]--[3]   [8]
+  #              |    |     |
+  #   Row2:      [5]--[6]--[7]
+
   - id: 0
     type: start
     name: 入口
+    minimap_xy: [0.13, 0.17]
     connections:
       - {id: 1, dir: right}
+
   - id: 1
     type: normal
-    name: 林间
+    name: 房间1
+    minimap_xy: [0.38, 0.17]
     connections:
       - {id: 0, dir: left}
-      - {id: 2, dir: up}
-      - {id: 3, dir: right}
+      - {id: 2, dir: right}
+
   - id: 2
     type: normal
-    name: 北侧
-    connections:
-      - {id: 1, dir: down}
-  - id: 3
-    type: elite
-    name: 精英房
+    name: 房间2
+    minimap_xy: [0.63, 0.17]
     connections:
       - {id: 1, dir: left}
-      - {id: 4, dir: up}
-      - {id: 5, dir: right}
-  - id: 4
-    type: hidden
-    name: 隐藏房
-    connections:
       - {id: 3, dir: down}
+
+  - id: 3
+    type: normal
+    name: 房间3
+    minimap_xy: [0.63, 0.50]
+    connections:
+      - {id: 2, dir: up}
+      - {id: 4, dir: left}
+      - {id: 6, dir: down}
+
+  - id: 4
+    type: normal
+    name: 房间4
+    minimap_xy: [0.38, 0.50]
+    connections:
+      - {id: 3, dir: right}
+      - {id: 5, dir: down}
+
   - id: 5
+    type: normal
+    name: 房间5
+    minimap_xy: [0.38, 0.83]
+    connections:
+      - {id: 4, dir: up}
+      - {id: 6, dir: right}
+
+  - id: 6
+    type: normal
+    name: 房间6
+    minimap_xy: [0.63, 0.83]
+    connections:
+      - {id: 3, dir: up}
+      - {id: 5, dir: left}
+      - {id: 7, dir: right}
+
+  - id: 7
+    type: normal
+    name: 房间7
+    minimap_xy: [0.88, 0.83]
+    connections:
+      - {id: 6, dir: left}
+      - {id: 8, dir: up}
+
+  - id: 8
     type: boss
     name: Boss
+    minimap_xy: [0.88, 0.50]
     connections:
-      - {id: 3, dir: left}
+      - {id: 7, dir: down}

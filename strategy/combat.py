@@ -8,7 +8,7 @@ from classes.base_class import CombatContext
 from .base import Strategy, StrategyContext
 
 
-MONSTER_CLASSES = {"monster", "elite", "boss"}
+MONSTER_CLASSES = {"monster", "stone", "elite", "boss"}
 BOSS_CLASSES = {"boss"}
 PLAYER_CLASS = "player"
 
@@ -31,20 +31,25 @@ class CombatStrategy(Strategy):
         if player is not None:
             px, py = player.center
             target = min(monsters, key=lambda d: abs(d.center[0] - px) + abs(d.center[1] - py) * 0.5)
-            distance = abs(target.center[0] - px)
-            direction = "right" if target.center[0] >= px else "left"
-            player_box = player.bbox
+            dx = target.center[0] - px
+            dy = target.center[1] - py
+            direction   = "right" if dx >= 0 else "left"
+            y_direction = "down"  if dy >  0 else ("up" if dy < 0 else "")
+            player_box  = player.bbox
         else:
-            target = monsters[0]
-            distance = 300
-            direction = "right"
-            player_box = None
+            target      = monsters[0]
+            dx, dy      = 300, 0
+            direction   = "right"
+            y_direction = ""
+            player_box  = None
 
         combat_ctx = CombatContext(
             monster_boxes=[m.bbox for m in monsters],
             player_box=player_box,
             boss_present=boss_present,
             approach_direction=direction,
-            distance_px=distance,
+            distance_px=abs(dx),
+            approach_y_direction=y_direction,
+            distance_y_px=abs(dy),
         )
         return ctx.character.get_attack_sequence(combat_ctx)
