@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from utils.config import load_with_base
 from .base_map import BaseMap
@@ -34,11 +34,18 @@ def load_map(path: str | Path) -> BaseMap:
             conns.append(cid)
             if d:
                 dir_map[cid] = d
+        enter_skills: Dict[str, List[str]] = {}
+        es = r.get("on_enter_skills")
+        if isinstance(es, dict):
+            for cls_name, skill_names in es.items():
+                enter_skills[cls_name] = list(skill_names)
+
         room = Room(
             id=int(r["id"]),
             type=rtype,
             connections=conns,
             name=r.get("name", ""),
+            on_enter_skills=enter_skills,
         )
         setattr(room, "direction_map", dir_map)
         m.add_room(room)

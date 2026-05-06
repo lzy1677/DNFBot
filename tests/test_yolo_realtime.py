@@ -163,7 +163,7 @@ def main() -> int:
                     help="YOLO 权重路径")
     ap.add_argument("--region", type=parse_region, default=None,
                     help="截图区域 left,top,right,bottom")
-    ap.add_argument("--window", default=None,
+    ap.add_argument("--window", default="地下城与勇士",
                     help="按窗口标题片段自动定位区域")
     ap.add_argument("--conf", type=float, default=0.35)
     ap.add_argument("--iou", type=float, default=0.45)

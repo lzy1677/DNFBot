@@ -156,8 +156,11 @@ class TestBerserker:
         actions = self.char.get_attack_sequence(ctx)
         assert len(actions) > 0
         move_actions = [a for a in actions if isinstance(a, Move)]
-        # distance_px=20 < 120, no approach needed
-        assert len(move_actions) == 0
+        # distance_px=20 < 50 → 只需要面向（face），不需要靠近（approach）
+        face_moves   = [m for m in move_actions if m.tag == "face"]
+        assert len(face_moves) == 1
+        # 没有其他移动动作
+        assert all(m.tag == "face" for m in move_actions)
 
     def test_get_attack_sequence_far_monster_approaches(self):
         ctx = CombatContext(

@@ -1,148 +1,206 @@
-"""传送门策略：带助跑的传送门进入逻辑。
+"""传送门策略：墙侧驱动的助跑+穿门。
 
-水平传送门：先跑到传送门对面 3 个角色宽度处（助跑位），再冲入。
-垂直传送门：先后退 1 个角色高度，再冲入。
-无传送门可见时回退为导航移动。
+门墙侧判断：bbox 宽高比决定物理朝向，地图方向用于区左/右或上/下。
+  - w > h → 扁宽门 → 上墙或下墙
+  - w < h → 细高门 → 左墙或右墙
+
+选门严格按 optimal_path。目标门不在画面内时，沿地图方向移动寻找；
+超时后兜底进入任意可见门。每帧只发一个 action（staging 或 entry），
+下一帧重新评估位置。
 """
 from __future__ import annotations
 
 from typing import List, Optional
 
 from action.action_queue import Action, Move
+from utils.logger import get_logger
 from vision.detector import Detection
 from .base import Strategy, StrategyContext
 
 
+log = get_logger(__name__)
+
 PORTAL_CLASSES = {"portal"}
 PLAYER_CLASS   = "player"
 
-# 找不到玩家时的尺寸回退值（像素，按 1280×720 估算）
 _DEFAULT_PLAYER_W = 80
 _DEFAULT_PLAYER_H = 120
 
-# 水平传送门：以玩家宽为单位的助跑距离
-_RUNUP_WIDTHS = 3
-# 进入判定：水平/垂直阈值
+# 助跑距离（以玩家尺寸为单位）
+_RUNUP_W_UNITS = 3
+_RUNUP_H_UNITS = 1
+
+# 对齐判定阈值（像素）
 _X_ALIGN = 30
 _Y_ALIGN = 25
-# 水平/垂直速度估算（px/s），用于换算 duration
+
+# 速度估算（px/s）
 _SPEED_H = 400
 _SPEED_V = 300
 
+# 找不到目标门时，持续搜索超时（秒），之后兜底进入任意可见门
+_SEEK_TIMEOUT = 5.0
+# 寻找目标门时每一步的移动时长（秒），短步快评
+_SEEK_STEP = 0.25
+
+
+def _get_map_direction(ctx: StrategyContext) -> Optional[str]:
+    """从 optimal_path 获取当前房间的期望行进方向。"""
+    if not ctx.map:
+        return None
+    nxt = ctx.map.next_room_towards_boss()
+    if nxt is None:
+        return None
+    d = ctx.map.direction_to(ctx.map.current_id, nxt)
+    return d if d in ("left", "right", "up", "down") else None
+
+
+def _get_wall_side(ctx: StrategyContext, portal: Detection) -> str:
+    """判断传送门在哪面墙上（纯位置驱动，不依赖地图方向）。
+
+    - w > h → 扁宽，上墙或下墙，按画面上下半区判断
+    - w < h → 细高，左墙或右墙，按画面左右半区判断"""
+    pw, ph = portal.wh
+
+    if pw > ph:
+        _, frame_h = ctx.frame_shape[1], ctx.frame_shape[0]
+        return "down" if portal.center[1] > frame_h / 2 else "up"
+    else:
+        _, frame_w = ctx.frame_shape[1], ctx.frame_shape[0]
+        return "right" if portal.center[0] > frame_w / 2 else "left"
+
 
 class PortalStrategy(Strategy):
+    """墙侧驱动的传送门策略。"""
+
     name = "portal"
 
-    def __init__(self, step_duration: float = 0.4) -> None:
+    def __init__(self, step_duration: float = 0.4,
+                 seek_timeout: float = _SEEK_TIMEOUT) -> None:
         self.step_duration = step_duration
+        self.seek_timeout = seek_timeout
+        self._timeout_logged = False
 
+    # ---- 入口 ---------------------------------------------------------------
     def decide(self, ctx: StrategyContext) -> List[Action]:
         portals = [d for d in ctx.detections if d.class_name in PORTAL_CLASSES]
 
-        # 无传送门可见：按地图方向前进
+        # 有怪物/可破坏物 → 不处理传送门，交给 combat 接管
+        if any(d.class_name in ("monster", "stone") for d in ctx.detections):
+            return []
+
+        expected_dir = _get_map_direction(ctx)
+
+        # 画面内无传送门 → 沿地图方向寻找
         if not portals:
-            if ctx.map:
-                nxt = ctx.map.next_room_towards_boss()
-                direction = (ctx.map.direction_to(ctx.map.current_id, nxt)
-                             if nxt is not None else None) or "right"
-            else:
-                direction = "right"
-            return [Move(direction=direction, duration=self.step_duration,
-                         tag="nav_to_portal")]
+            return self._seek(expected_dir)
 
         player = next((d for d in ctx.detections if d.class_name == PLAYER_CLASS), None)
         if player is None:
-            # 看不到玩家，继续朝地图方向前进
-            return [Move(direction="right", duration=self.step_duration, tag="nav_blind")]
+            return self._seek(expected_dir)
 
         px, py = player.bottom_center
-        pw, ph  = player.wh if player.wh[0] > 0 else (_DEFAULT_PLAYER_W, _DEFAULT_PLAYER_H)
+        pw, ph = player.wh if player.wh[0] > 0 else (_DEFAULT_PLAYER_W, _DEFAULT_PLAYER_H)
 
-        # 选最近传送门
-        target = min(portals, key=lambda d: abs(d.center[0] - px))
-        tx, ty  = target.center
-        dx = tx - px
-        dy = ty - py
+        # 寻找 optimal_path 指定的目标门
+        target = self._pick_target(portals, ctx, expected_dir)
 
-        # 判断以水平还是垂直方向为主
-        if abs(dx) >= abs(dy) * 0.7:
-            return self._approach_horizontal(dx, dy, px, py, pw, ph)
-        else:
-            return self._approach_vertical(dx, dy, px, py, pw, ph)
-
-    # ------------------------------------------------------------------ #
-    def _approach_horizontal(self, dx, dy, px, py, pw, ph) -> List[Action]:
-        """
-        水平传送门进入逻辑：
-          - 传送门在左（dx<0）：助跑位 = portal_x + 3*pw，然后向左冲入
-          - 传送门在右（dx>0）：助跑位 = portal_x - 3*pw，然后向右冲入
-        """
-        runup = _RUNUP_WIDTHS * pw
-
-        if dx < 0:  # 传送门在左侧
-            # portal_x = px + dx，助跑位在传送门右侧 runup 处
-            portal_x   = px + dx
-            stage_x    = portal_x + runup          # 目标助跑位（屏幕 X）
-            stage_dx   = stage_x - px              # 需要往右移的量（正=右，负=左）
-            entry_dir  = "left"
-        else:        # 传送门在右侧
-            portal_x   = px + dx
-            stage_x    = portal_x - runup
-            stage_dx   = stage_x - px
-            entry_dir  = "right"
-
-        actions: List[Action] = []
-
-        # Step 1：移动到助跑位（同时修正 Y 对齐）
-        need_stage = abs(stage_dx) > _X_ALIGN
-        need_y     = abs(dy) > _Y_ALIGN
-
-        if need_stage or need_y:
-            if need_stage and need_y:
-                h_part = "right" if stage_dx > 0 else "left"
-                v_part = "down"  if dy       > 0 else "up"
-                direction = f"{h_part},{v_part}"
-                dur = min(0.8, max(abs(stage_dx) / _SPEED_H,
-                                   abs(dy)       / _SPEED_V))
-            elif need_stage:
-                direction = "right" if stage_dx > 0 else "left"
-                dur = min(0.8, abs(stage_dx) / _SPEED_H)
+        if target is None:
+            # 目标门不在画面中 → 搜索超时后兜底进入任意门
+            if ctx.elapsed_in_state >= self.seek_timeout:
+                if not self._timeout_logged:
+                    log.info("[portal] 搜索超时 %.1fs，兜底进入任意可见门",
+                             ctx.elapsed_in_state)
+                    self._timeout_logged = True
+                target = portals[0]
             else:
-                direction = "down" if dy > 0 else "up"
-                dur = min(0.4, abs(dy) / _SPEED_V)
-            actions.append(Move(direction=direction, duration=dur, tag="portal_stage"))
+                return self._seek(expected_dir)
+        else:
+            self._timeout_logged = False
 
-        # Step 2：助跑冲入（距离 = runup + 一点余量确保穿过传送门）
-        entry_dur = min(0.8, (runup + pw * 0.5) / _SPEED_H)
-        actions.append(Move(direction=entry_dir, duration=entry_dur, tag="portal_entry"))
-        return actions
+        wall = _get_wall_side(ctx, target)
+        tx = target.center[0]
+        ty = target.bottom_center[1]
+        return self._approach(wall, px, py, pw, ph, tx, ty)
 
-    def _approach_vertical(self, dx, dy, px, py, pw, ph) -> List[Action]:
-        """
-        垂直传送门进入逻辑：
-          - 传送门在下方（dy>0）：先向上退 1 个角色高度，再向下冲入
-          - 传送门在上方（dy<0）：先向下退 1 个角色高度，再向上冲入
-        """
-        actions: List[Action] = []
+    # ---- 选门 ---------------------------------------------------------------
+    @staticmethod
+    def _pick_target(portals: List[Detection], ctx: StrategyContext,
+                     expected_dir: Optional[str]) -> Optional[Detection]:
+        """在可见门中选 optimal_path 方向匹配的。未匹配时返回 None。"""
+        if expected_dir is None:
+            # 无 optimal_path → 选最近的门兜底
+            return portals[0]
 
-        # 先修正 X 对齐
-        if abs(dx) > _X_ALIGN:
-            x_dir = "right" if dx > 0 else "left"
-            actions.append(Move(direction=x_dir,
-                                duration=min(0.5, abs(dx) / _SPEED_H),
-                                tag="portal_align_x"))
+        for p in portals:
+            if _get_wall_side(ctx, p) == expected_dir:
+                return p
+        return None
 
-        if dy > 0:   # 传送门在下方
-            actions.append(Move(direction="up",
-                                duration=min(0.4, ph / _SPEED_V),
-                                tag="portal_stage_up"))
-            entry_dir = "down"
-        else:        # 传送门在上方
-            actions.append(Move(direction="down",
-                                duration=min(0.4, ph / _SPEED_V),
-                                tag="portal_stage_down"))
-            entry_dir = "up"
+    # ---- 寻找 ---------------------------------------------------------------
+    @staticmethod
+    def _seek(expected_dir: Optional[str]) -> List[Action]:
+        """沿地图方向短步移动，寻找目标传送门。"""
+        direction = expected_dir or "right"
+        return [Move(direction=direction, duration=_SEEK_STEP, tag="seek_portal")]
 
-        entry_dur = min(0.8, (ph + abs(dy)) / _SPEED_V)
-        actions.append(Move(direction=entry_dir, duration=entry_dur, tag="portal_entry"))
-        return actions
+    # ---- 接近（每帧一个 action）---------------------------------------------
+    @staticmethod
+    def _approach(wall: str, px: float, py: float,
+                  pw: float, ph: float, tx: float, ty: float) -> List[Action]:
+        """单帧单动作：到达助跑位则冲入，否则移动到助跑位。"""
+        runup_w = _RUNUP_W_UNITS * pw
+        runup_h = _RUNUP_H_UNITS * ph
+
+        if wall == "right":
+            stage_x, stage_y = tx - runup_w, ty
+            entry_dir, entry_dur = "right", min(0.8, (runup_w + pw * 0.5) / _SPEED_H)
+        elif wall == "left":
+            stage_x, stage_y = tx + runup_w, ty
+            entry_dir, entry_dur = "left", min(0.8, (runup_w + pw * 0.5) / _SPEED_H)
+        elif wall == "up":
+            stage_x, stage_y = tx, ty + runup_h
+            entry_dir, entry_dur = "up", min(0.8, (runup_h + ph * 0.5) / _SPEED_V)
+        else:  # "down"
+            stage_x, stage_y = tx, ty - runup_h
+            entry_dir, entry_dur = "down", min(0.8, (runup_h + ph * 0.5) / _SPEED_V)
+
+        at_x = abs(px - stage_x) <= _X_ALIGN
+        at_y = abs(py - stage_y) <= _Y_ALIGN
+
+        if at_x and at_y:
+            return [Move(direction=entry_dir, duration=entry_dur,
+                        tag=f"portal_entry_{wall[0]}")]
+
+        return [_make_move(px, py, stage_x, stage_y, tag=f"portal_stage_{wall[0]}")]
+
+
+# ---- 工具 -------------------------------------------------------------------
+def _make_move(px: float, py: float, tx: float, ty: float,
+               tag: str) -> Move:
+    """复合方向移动（水平+垂直同时）。"""
+    dx = tx - px
+    dy = ty - py
+
+    h_dir: Optional[str] = None
+    v_dir: Optional[str] = None
+
+    if abs(dx) > _X_ALIGN:
+        h_dir = "right" if dx > 0 else "left"
+    if abs(dy) > _Y_ALIGN:
+        v_dir = "down" if dy > 0 else "up"
+
+    if h_dir and v_dir:
+        direction = f"{h_dir},{v_dir}"
+        dur = min(0.8, max(abs(dx) / _SPEED_H, abs(dy) / _SPEED_V))
+    elif h_dir:
+        direction = h_dir
+        dur = min(0.8, abs(dx) / _SPEED_H)
+    elif v_dir:
+        direction = v_dir
+        dur = min(0.6, abs(dy) / _SPEED_V)
+    else:
+        direction = "right"
+        dur = 0.1
+
+    return Move(direction=direction, duration=dur, tag=tag)

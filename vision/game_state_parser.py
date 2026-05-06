@@ -1,14 +1,14 @@
 """从 YOLO 检测结果推断 GameState。
 
-当前模型类别：monster / stone / item / portal / player / ui_button
-
-规则（按优先级从高到低）：
+检测驱动状态推断（按优先级从高到低）：
   1. 检测到 ui_button              → RESULT_SCREEN
-  2. 检测到 portal 且数量>=2       → PORTAL_SELECT
-  3. 检测到 monster 或 stone       → COMBAT
-  4. 检测到 item，无怪无stone       → LOOTING
-  5. 检测到 player，无怪无物        → IN_ROOM
-  6. 其他（画面空或仅有传送门）      → NAVIGATING
+  2. 检测到 monster 或 stone       → COMBAT  （Boss 房判断由 bot.py 根据地图覆盖）
+  3. 检测到 item，无怪无stone       → LOOTING
+  4. 检测到 portal（≥1），无怪无物  → PORTAL
+  5. 检测到 player，无其他          → IN_ROOM
+  6. 其他（画面空）                 → NAVIGATING
+
+LOADING 状态由 bot.py 根据帧亮度 + 检测数独立判断（不在 parse() 中推断）。
 
 为减少抖动，需要连续 N 帧（confirm_frames）同一状态才真正切换。
 """
@@ -29,8 +29,6 @@ log = get_logger(__name__)
 @dataclass
 class ParserConfig:
     monster_classes: Set[str] = field(default_factory=lambda: {"monster", "stone"})
-    # boss_classes 保留字段，当前模型无 boss 类别，默认为空
-    boss_classes: Set[str] = field(default_factory=set)
     item_classes: Set[str] = field(default_factory=lambda: {"item"})
     portal_classes: Set[str] = field(default_factory=lambda: {"portal"})
     player_class: str = "player"
@@ -44,7 +42,6 @@ class ParserConfig:
             return set(v) if v else default
         cfg = cls()
         cfg.monster_classes = _set("monster_classes", cfg.monster_classes)
-        cfg.boss_classes    = _set("boss_classes",    cfg.boss_classes)
         cfg.item_classes    = _set("item_classes",    cfg.item_classes)
         cfg.portal_classes  = _set("portal_classes",  cfg.portal_classes)
         cfg.ui_classes      = _set("ui_classes",      cfg.ui_classes)
@@ -62,6 +59,18 @@ class GameStateParser:
     def parse(self, detections: List[Detection]) -> GameState:
         raw = self._infer(detections)
         self._window.append(raw)
+
+        # RESULT_SCREEN 立即切换（结算 UI 特征明确，误检率极低）
+        # COMBAT 走正常防抖，避免 YOLO 单帧误检 monster/stone 导致卡死
+        if raw == GameState.RESULT_SCREEN:
+            if raw != self._confirmed:
+                log.debug("[parser] 紧急切换: %s → %s（跳过防抖）",
+                          self._confirmed.value, raw.value)
+                self._confirmed = raw
+                self._window.clear()
+                self._window.append(raw)
+            return self._confirmed
+
         window_full = (len(self._window) == self._window.maxlen
                        and all(s == raw for s in self._window))
         if window_full:
@@ -83,28 +92,27 @@ class GameStateParser:
         if nset & self.cfg.ui_classes:
             return GameState.RESULT_SCREEN
 
-        # 2) 传送门选择（≥2 个，说明在路口）
-        portals = [n for n in names if n in self.cfg.portal_classes]
-        if len(portals) >= 2:
-            return GameState.PORTAL_SELECT
-
-        # 3) 战斗（monster / stone，有 boss_classes 时进 BOSS_ROOM）
+        # 2) 战斗（monster / stone）
+        #    Boss 房判断由 bot.py 根据地图覆盖 COMBAT → BOSS_ROOM
         monsters = [n for n in names if n in self.cfg.monster_classes]
         if monsters:
-            if self.cfg.boss_classes and any(n in self.cfg.boss_classes for n in monsters):
-                return GameState.BOSS_ROOM
             return GameState.COMBAT
 
-        # 4) 拾取（无怪无stone）
+        # 3) 拾取（无怪无stone）
         items = [n for n in names if n in self.cfg.item_classes]
         if items:
             return GameState.LOOTING
 
-        # 5) 玩家可见，无怪无物 → 空房间（刚进房或停留中）
+        # 4) 传送门（≥1 个，无怪无物，交给 PortalStrategy 处理接近/穿门）
+        portals = [n for n in names if n in self.cfg.portal_classes]
+        if portals:
+            return GameState.PORTAL
+
+        # 5) 玩家可见，无怪无物无门 → 空房间（评估后再决定行动）
         if self.cfg.player_class in nset:
             return GameState.IN_ROOM
 
-        # 6) 画面空（房间已清场）→ 准备导航到下一房间
+        # 6) 画面空（房间已清场）→ 导航移动到下一区域
         return GameState.NAVIGATING
 
     @property

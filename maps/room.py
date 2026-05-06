@@ -22,6 +22,8 @@ class Room:
     connections: List[int] = field(default_factory=list)
     name: str = ""
     cleared: bool = False
+    # 进房时按职业固定释放技能 {class_name: [skill_name, ...]}
+    on_enter_skills: Dict[str, List[str]] = field(default_factory=dict)
 
     def is_boss(self) -> bool:
         return self.type == RoomType.BOSS

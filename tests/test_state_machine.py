@@ -14,7 +14,7 @@ class TestGameState:
     def test_all_states_have_value(self):
         expected = {
             "idle", "in_town", "entering_dungeon", "in_room", "combat",
-            "looting", "navigating", "portal_select", "boss_room",
+            "looting", "navigating", "portal", "boss_room",
             "result_screen", "loading", "unknown",
         }
         assert {s.value for s in GameState} == expected
@@ -98,7 +98,7 @@ class TestStateMachine:
             GameState.COMBAT,
             GameState.LOOTING,
             GameState.NAVIGATING,
-            GameState.PORTAL_SELECT,
+            GameState.PORTAL,
             GameState.LOADING,
             GameState.RESULT_SCREEN,
         ]

@@ -10,11 +10,12 @@ from utils.timer import Cooldown
 @dataclass
 class Skill:
     name: str
-    key: str
+    key: str = ""                           # 单键；combo 技能可为空
     cooldown: float = 0.0
     priority: int = 0
-    duration: float = 0.04          # 按键持续时间
+    duration: float = 0.04                  # 按键持续时间
     description: str = ""
+    combo: Optional[List[str]] = None       # 多键序列（如 buff: → → space）
     _cd: Cooldown = field(init=False)
 
     def __post_init__(self) -> None:
@@ -28,6 +29,9 @@ class Skill:
 
     def trigger(self) -> None:
         self._cd.trigger()
+
+    def reset(self) -> None:
+        self._cd.reset()
 
 
 class SkillSet:
@@ -56,3 +60,13 @@ class SkillSet:
     def highest_priority_ready(self) -> Optional[Skill]:
         candidates = self.ready_skills()
         return max(candidates, key=lambda s: s.priority) if candidates else None
+
+    def shortest_cooldown_ready(self) -> Optional[Skill]:
+        """返回就绪技能中冷却最短的（小技能优先，排除 priority<=0 的功能键）。"""
+        candidates = [s for s in self.ready_skills() if s.priority >= 1]
+        return min(candidates, key=lambda s: s.cooldown) if candidates else None
+
+    def reset_all(self) -> None:
+        """重置所有技能冷却（新副本开始时调用）。"""
+        for s in self._by_name.values():
+            s.reset()

@@ -1,6 +1,6 @@
 # DNF 自动化工具 - 架构设计文档
 
-> 最后更新：2026-04-26（与代码实际实现同步）
+> 最后更新：2026-05-03（状态机 v2 + 墙侧驱动传送门策略）
 
 ## Context
 
@@ -14,16 +14,17 @@
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                     main.py（入口）                       │
-│         --verbose / --dry-run / --settings              │
+│   --verbose / --dry-run / --settings / --no-skip-dungeon │
 ├─────────────────────────────────────────────────────────┤
 │                   GameBot（主控制器）                      │
-│          状态机驱动，20 Hz 主循环，心跳日志                  │
+│     状态机驱动，20 Hz 主循环，心跳日志                      │
+│     LOADING 暗屏检测 / Boss 房地图覆盖 / 重新挑战超时       │
 ├──────────────────────────────┬──────────────────────────┤
 │  决策层 Strategy              │  核心层 Core              │
 │  ├── CombatStrategy          │  ├── GameState (枚举)     │
 │  ├── NavigationStrategy      │  ├── StateMachine        │
 │  ├── LootStrategy            │  └── EventBus            │
-│  ├── PortalStrategy          │                          │
+│  ├── PortalStrategy (墙侧)    │                          │
 │  └── RecoveryStrategy        │                          │
 ├──────────────────────────────┼──────────────────────────┤
 │  感知层 Vision                │  执行层 Action            │
@@ -31,8 +32,10 @@
 │  │     (dxcam / mss)        │  │     (Win32 SendInput) │
 │  ├── YOLODetector            │  ├── ActionQueue         │
 │  │     (ultralytics)        │  │     (worker thread)   │
-│  └── GameStateParser         │  └── Skill / SkillSet    │
-│        (debounce N帧)        │                          │
+│  ├── GameStateParser         │  └── Skill / SkillSet    │
+│  │     (debounce N帧)       │                          │
+│  └── MinimapReader           │                          │
+│        (HSV 检测定位)        │                          │
 ├──────────────────────────────┼──────────────────────────┤
 │  职业层 Classes               │  地图层 Maps              │
 │  ├── BaseClass (ABC)         │  ├── BaseMap (BFS)       │
@@ -47,11 +50,11 @@
 
 ---
 
-## 项目目录结构（实际）
+## 项目目录结构
 
 ```
 DNFBot/
-├── main.py                        # 入口（--verbose / --dry-run）
+├── main.py                        # 入口（--verbose / --dry-run / --no-skip-dungeon）
 ├── requirements.txt
 ├── ARCHITECTURE.md
 │
@@ -59,7 +62,7 @@ DNFBot/
 │   ├── settings.yaml              # 全局配置
 │   ├── maps/
 │   │   ├── base.yaml              # 地图继承基础模板
-│   │   └── dungeon_01.yaml        # 格兰之森（6 间房 + 隐藏房）
+│   │   └── dungeon_01.yaml        # 格蓝迪发电站（9 间房，含 Boss 房）
 │   └── classes/
 │       ├── base.yaml              # 职业继承基础模板
 │       ├── berserker.yaml         # 狂战士
@@ -73,7 +76,8 @@ DNFBot/
 ├── vision/
 │   ├── capture.py                 # ScreenCapture（dxcam 优先，回退 mss）
 │   ├── detector.py                # YOLODetector（warmup + detect）
-│   └── game_state_parser.py       # 检测结果 → GameState（confirm_frames 防抖）
+│   ├── game_state_parser.py       # 检测结果 → GameState（confirm_frames 防抖）
+│   └── minimap_reader.py          # 小地图 HSV 检测，房间级定位
 │
 ├── action/
 │   ├── input_driver.py            # Win32 SendInput 扫描码键鼠驱动
@@ -87,7 +91,7 @@ DNFBot/
 │   ├── combat.py                  # 战斗（贴脸 + 技能优先级）
 │   ├── loot.py                    # 拾取（向最近物品移动 + pickup 键）
 │   ├── navigation.py              # 导航（沿 optimal_path 移动）
-│   ├── portal.py                  # 传送门（按目标房间类型偏好选门）
+│   ├── portal.py                  # 传送门（墙侧驱动：地图方向 + bbox 比例）
 │   └── recovery.py                # 恢复（结算自动重试 + 卡死抖动解卡）
 │
 ├── classes/
@@ -112,7 +116,7 @@ DNFBot/
 │   ├── train.py                   # YOLOv8n/s 训练脚本
 │   └── prepare_dataset.py         # 数据集整理
 │
-└── tests/                         # 单元测试（201 个，pytest）
+└── tests/                         # 单元测试（202 个，pytest）
     ├── test_state_machine.py
     ├── test_game_state_parser.py
     ├── test_detector.py
@@ -132,28 +136,75 @@ DNFBot/
 
 ## 核心模块设计
 
-### 1. 状态机
+### 1. 状态机（v2）
+
+状态分为两类：
+
+| 类型 | 状态 | 判断方式 |
+|------|------|----------|
+| 检测驱动 | IN_ROOM, COMBAT, LOOTING, NAVIGATING, PORTAL, BOSS_ROOM, RESULT_SCREEN, LOADING, UNKNOWN | YOLO 检测 + 启发式（暗屏） |
+| 动作驱动 | IDLE, IN_TOWN, ENTERING_DUNGEON | Bot 在执行动作序列时直接设置 |
 
 ```
-IDLE → IN_TOWN → ENTERING_DUNGEON → IN_ROOM ⇄ COMBAT ⇄ LOOTING
-                                         ↓
-                                    NAVIGATING → PORTAL_SELECT
-                                                      ↓
-                                               BOSS_ROOM → RESULT_SCREEN
-                              LOADING / UNKNOWN 可进出任意状态
+                    ┌──── 检测驱动（YOLO + 启发式）────┐
+                    │                                  │
+IN_TOWN ──(动作)──→ ENTERING_DUNGEON ──(动作完成)──→ LOADING
+  ↑                                                    │
+  │                                                    ↓
+  │             ┌───────────────── IN_ROOM ←───────────┘
+  │             │                     │
+  │             │         ┌───────────┼───────────┐
+  │             │         ▼           ▼           ▼
+  │             │     COMBAT      LOOTING    NAVIGATING
+  │             │         │           │           │
+  │             │         ├───────────┤           │
+  │             │         ▼           ▼           │
+  │             │     LOOTING ←── IN_ROOM        │
+  │             │         │           │           │
+  │             │         └───────────┘           │
+  │             │                                 ▼
+  │             │                              PORTAL
+  │             │                                 │
+  │             │                                 ▼
+  │             │                              LOADING ──→ 回到 IN_ROOM
+  │             │
+  │             ▼
+  │       BOSS_ROOM → COMBAT → LOOTING → RESULT_SCREEN
+  │                                           │
+  └── (动作：再次挑战失败) ◀────────────────────┘
+  │
+  └── (动作：再次挑战成功) → LOADING → IN_ROOM
+
+任意状态 ──(超时卡死)──→ UNKNOWN ──(恢复)──→ 回原状态
 ```
 
-每个状态对应一个 `Strategy`，由 `GameStateParser` 每帧推断，
-`StateMachine.transition()` 根据合法转移表决定是否切换（`force=True` 可绕过）。
-
-启动参数中添加skip_entering_dugeon, 初始状态从in_room开始
+状态枚举（12 个）：
 
 ```python
 # core/state.py
 class GameState(Enum):
-    IDLE / IN_TOWN / ENTERING_DUNGEON / IN_ROOM / COMBAT
-    LOOTING / NAVIGATING / PORTAL_SELECT / BOSS_ROOM
-    RESULT_SCREEN / LOADING / UNKNOWN
+    IDLE / IN_TOWN / ENTERING_DUNGEON / LOADING
+    IN_ROOM / COMBAT / LOOTING / NAVIGATING
+    PORTAL / BOSS_ROOM / RESULT_SCREEN / UNKNOWN
+```
+
+转移表：
+
+```python
+_TRANSITIONS = {
+    IDLE:              {IN_TOWN},
+    IN_TOWN:           {ENTERING_DUNGEON},
+    ENTERING_DUNGEON:  {LOADING, IN_ROOM},
+    LOADING:           set(GameState),          # 开放（启发式检测可能误判）
+    IN_ROOM:           {COMBAT, LOOTING, PORTAL, NAVIGATING, BOSS_ROOM},
+    COMBAT:            {IN_ROOM, LOOTING, BOSS_ROOM},
+    LOOTING:           {IN_ROOM, NAVIGATING, COMBAT},
+    NAVIGATING:        {COMBAT, LOOTING, PORTAL, IN_ROOM, BOSS_ROOM},
+    PORTAL:            {LOADING, IN_ROOM, COMBAT},
+    BOSS_ROOM:         {COMBAT, LOOTING, RESULT_SCREEN},
+    RESULT_SCREEN:     {LOADING, IN_TOWN, ENTERING_DUNGEON},
+    UNKNOWN:           set(GameState),
+}
 ```
 
 ### 2. GameBot 主循环
@@ -163,24 +214,30 @@ class GameState(Enum):
 while running:
     frame   = capture.grab()              # ~1ms (dxcam)
     dets    = detector.detect(frame)      # ~10-15ms (YOLOv8n GPU)
-    state   = parser.parse(dets)          # confirm_frames=3 防抖
+
+    if _is_loading(frame, dets):          # 暗屏 + 检测数 ≤ 1 → LOADING
+        state = LOADING
+    else:
+        state = parser.parse(dets)        # confirm_frames=3 防抖
+
+    if state == COMBAT and _is_boss_room():  # 地图覆盖：Boss 房 + 有怪 → BOSS_ROOM
+        state = BOSS_ROOM
 
     if state != sm.current:
-        sm.transition(state)              # 验证合法性后切换
+        sm.transition(state)
         bus.emit("state_change", state)
 
+    if sm.current == RESULT_SCREEN and sm.time_in_state() > 30:
+        sm.transition(IN_TOWN, force=True)   # 重新挑战超时放弃
+
     strategy = strategies[sm.current]
-    if not queue.is_busy():               # 队列空闲才下发新动作
+    if not queue.is_busy():
         actions = strategy.decide(ctx)
         queue.submit(actions)
 ```
 
-`--verbose` / `logging.verbose: true` 时每帧打印：
-```
-[tick] cap=0.8ms  infer=11.2ms  dets=3  parser→combat  cur=combat
-[策略] combat → ['approach', 'skill:q']
-[action] ▶ skill:q   [action] ✓ skill:q (42ms)
-```
+`--skip-dungeon` 默认为 `True`：假设角色已在副本内，直接从 `IN_ROOM` 启动。
+`--no-skip-dungeon` 从 `IDLE` 启动完整进图流程。
 
 ### 3. 感知层 — YOLO 检测
 
@@ -190,19 +247,23 @@ while running:
 |------|------|
 | `monster` | 普通怪物 |
 | `item` | 掉落物品 |
-| `portal` | 普通传送门 |
+| `portal` | 传送门 |
 | `player` | 自身角色 |
-| `ui_button` | 通关标识 |
-| `stone` | 可破坏物品，实际处理时可以当作monster |
+| `ui_button` | 通关/重新挑战按钮 |
+| `stone` | 可破坏物品（处理时视作 monster） |
 
 `GameStateParser` 推断规则（优先级从高到低）：
-1. 检测到 `ui_button` → `RESULT_SCREEN`
-2. 检测到 ≥2 个传送门 → `PORTAL_SELECT`
-3. 检测到 怪物，stone → `COMBAT`
-4. 检测到物品、无怪、无stone → `LOOTING`
-5. 检测到 无物品，无怪，无stone → `NAVIGATING`
-6. 检测到 `player` 无怪无物 → `IN_ROOM`
-7. 其他 → `UNKNOWN`
+
+```
+1. ui_button 可见           → RESULT_SCREEN
+2. monster / stone 可见     → COMBAT   （Boss 房由 bot.py 地图覆盖）
+3. item 可见，无怪无stone   → LOOTING
+4. portal 可见（≥1），无怪无物 → PORTAL
+5. player 可见，无其他       → IN_ROOM
+6. 画面空（无有效检测）      → NAVIGATING
+```
+
+LOADING 状态由 `bot.py` 独立检测：BGR 均值 < 50 + 检测数 ≤ 1 + 3 帧确认。
 
 `confirm_frames=3`：连续 N 帧相同结果才真正切换，防止单帧误检抖动。
 
@@ -221,7 +282,26 @@ while running:
 
 队列忙时主循环跳过策略决策（`RESULT_SCREEN` / `UNKNOWN` 状态除外，可被恢复策略打断）。
 
-### 5. 职业系统
+### 5. 传送门策略（墙侧驱动）
+
+PortalStrategy 根据**门所在墙侧**（而非玩家-门相对偏移）计算助跑位，避免门框碰撞体挡路。
+
+**墙侧判断（两优先级）：**
+1. 地图连接方向：`direction_to(current_id, next_room_id)` — 绝对正确
+2. Bbox 宽高比兜底：`w >= h` → 左右墙 + 画面位置判断左/右；`h > w` → 上下墙 + 画面位置判断上/下
+
+**按墙侧计算助跑位：**
+
+```
+右墙门 (dir=right)：助跑位 = (portal.x - 3*player_w, portal.y)，冲入方向 = right
+左墙门 (dir=left)： 助跑位 = (portal.x + 3*player_w, portal.y)，冲入方向 = left
+上墙门 (dir=up)：   助跑位 = (portal.x, portal.y + 1*player_h)，冲入方向 = up
+下墙门 (dir=down)： 助跑位 = (portal.x, portal.y - 1*player_h)，冲入方向 = down
+```
+
+分两步：移动到助跑位 → 向门方向冲刺。玩家在右上角、右墙门在下方时，会先向左脱离门框，再向下对齐，最后向右冲入。
+
+### 6. 职业系统
 
 ```python
 # classes/base_class.py
@@ -250,45 +330,40 @@ combo_chains:
   - [attack, attack, skill_1]
 ```
 
-### 6. 地图系统
+### 7. 地图系统
 
-房间支持四种类型：`start / normal / elite / boss 。
+房间支持四种类型：`start / normal / elite / boss`。
 
-连接格式支持纯 id 或带方向：
+连接格式支持带方向：
 ```yaml
 connections:
-  - {id: 1, dir: right}   # 带方向
-  - 2                     # 纯 id（方向由 id 大小推断）
+  - {id: 1, dir: right}
 ```
 
 `BaseMap` 导航逻辑：
 1. 按 `optimal_path` 列表顺序推进；
 2. 当前位置不在路径上时，退化为 BFS 到 Boss 房的最短路。
 
+小地图修正：每 0.5s 通过 HSV 颜色检测读取小地图，发现房间 ID 与记录不符时自动修正 `game_map.current_id`。
+
+Boss 房识别：`bot.py` 在每帧检查 `current_room.type == RoomType.BOSS`，有怪时将 parser 的 `COMBAT` 覆盖为 `BOSS_ROOM`。
+
 ```yaml
-# config/maps/dungeon_01.yaml（已实现）
-name: 格兰之森
+# config/maps/dungeon_01.yaml（格蓝迪发电站）
+name: 格蓝迪发电站
 start_id: 0
-optimal_path: [0, 1, 3, 5]
+optimal_path: [0, 1, 2, 3, 6, 7, 8]
 rooms:
-  - {id: 0, type: start,  connections: [{id: 1, dir: right}]}
-  - {id: 1, type: normal, connections: [{id: 0, dir: left}, {id: 2, dir: up}, {id: 3, dir: right}]}
-  - {id: 2, type: normal, connections: [{id: 1, dir: down}]}
-  - {id: 3, type: elite,  connections: [{id: 1, dir: left}, {id: 4, dir: up},  {id: 5, dir: right}]}
-  - {id: 4, type: hidden, connections: [{id: 3, dir: down}]}
-  - {id: 5, type: boss,   connections: [{id: 3, dir: left}]}
+  - {id: 0, type: start, connections: [{id: 1, dir: right}]}
+  - {id: 1, type: normal, connections: [{id: 0, dir: left}, {id: 2, dir: right}]}
+  # ... 共 9 间房，含 Boss (id: 8)
 ```
-
-### 7. 传送门策略
-
-`PortalStrategy` 根据**目标房间类型**选择偏好的门类型：
-
-所有传送门是相同的，所以不存在传送门策略。实际工作时，优先按照地图配置寻找，如果地图配置路径中无法找到传送门，则按照最短路径寻路到boss
 
 ### 8. 恢复策略
 
 `RecoveryStrategy` 处理两种异常情况：
-- **结算画面**：检测到 `ui_button` → 按 page_down 自动重新挑战；
+
+- **结算画面**：检测到 `ui_button` → 按 page_down 自动重新挑战。超时 30s 后 bot.py 强制回 IN_TOWN（疲劳耗尽/装备损坏）。
 - **卡死**：`UNKNOWN` 状态停留超过 `stuck_seconds`（默认 8s）→ 左右各抖动 0.15s + 跳一下。
 
 ### 9. 键盘驱动
@@ -312,6 +387,7 @@ driver.mouse_click(x=640, y=360)          # 绝对坐标点击
 | `python main.py` | INFO | 初始化步骤 + 状态切换 + 5s 心跳 |
 | `python main.py --verbose` | DEBUG | 每帧耗时 + 检测结果 + 动作队列详情 |
 | `python main.py --dry-run` | INFO | 只初始化，验证配置是否正常，不进主循环 |
+| `python main.py --no-skip-dungeon` | INFO | 从 IDLE 启动完整进图流程（默认 skip） |
 
 `settings.yaml` 等效开关：`logging.verbose: true`。
 
@@ -358,33 +434,6 @@ python -m pytest tests/test_state_machine.py tests/test_game_state_parser.py \
 覆盖范围：状态机、GameStateParser、YOLODetector（mock）、ScreenCapture（mock）、
 InputDriver（mock SendInput）、ActionQueue 多线程、五种策略、BaseMap BFS 寻路、
 Berserker/Elementalist 职业、EventBus 线程安全、Cooldown/RateLimiter、GameBot 集成。
-
----
-
-## 实施进度
-
-### Phase 1 — 基础框架 ✅
-- 项目结构、YAML 配置（含 `extends` 继承）、日志（verbose 开关）
-- ScreenCapture（dxcam/mss 自动回退）
-- Win32 SendInput 输入驱动
-- StateMachine + EventBus
-
-### Phase 2 — 感知能力 ✅
-- YOLODetector（warmup + 推理日志）
-- GameStateParser（规则推断 + confirm_frames 防抖）
-- 数据集工具（video_to_pic.py）+ 训练脚本（train.py）
-- 模型已训练：`vision/models/dnf_v1.pt`
-
-### Phase 3 — 核心策略 ✅
-- 5 个策略全部实现：Combat / Loot / Navigation / Portal / Recovery
-- 2 个职业：Berserker + Elementalist
-- 1 个地图：dungeon_01（格兰之森，含隐藏房）
-
-### Phase 4 — 扩展 🔄 进行中
-- [ ] 更多地图配置
-- [ ] 更多职业（剑魂、鬼泣等）
-- [ ] 小地图识别辅助定位（当前纯靠传送门检测）
-- [ ] 异常截图自动保存（用于后续标注迭代）
 
 ---
 

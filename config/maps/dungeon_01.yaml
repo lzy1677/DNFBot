@@ -1,7 +1,7 @@
 extends: base.yaml
 name: 格蓝迪发电站
 start_id: 0
-optimal_path: [0, 1, 2, 3, 6, 7, 8]
+optimal_path: [0, 1, 2, 3, 4, 5, 6, 7, 8]
 
 # 小地图检测配置
 minimap:
@@ -78,6 +78,8 @@ rooms:
     type: normal
     name: 房间6
     minimap_xy: [0.63, 0.83]
+    on_enter_skills:
+      wind_mage: [awakening]   # 进房固定释放 alt（风神之力）
     connections:
       - {id: 3, dir: up}
       - {id: 5, dir: left}

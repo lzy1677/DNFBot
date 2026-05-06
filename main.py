@@ -21,8 +21,10 @@ def main() -> int:
                     help="只初始化，不进入主循环（自检用）")
     ap.add_argument("--verbose", "-v", action="store_true",
                     help="DEBUG 级别日志：显示每帧耗时、检测结果、动作队列详情")
-    ap.add_argument("--skip-dungeon", action="store_true",
-                    help="跳过进城/进本流程，直接从 IN_ROOM 状态启动（已在副本内时使用）")
+    ap.add_argument("--skip-dungeon", action="store_true", default=True,
+                    help="跳过进城/进本流程，直接从 IN_ROOM 启动（默认启用）")
+    ap.add_argument("--no-skip-dungeon", dest="skip_dungeon", action="store_false",
+                    help="从 IDLE 状态启动，走完整的进图流程")
     args = ap.parse_args()
 
     settings = Path(args.settings)

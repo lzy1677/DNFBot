@@ -1,0 +1,23 @@
+extends: base.yaml
+name: 风法师
+keys:
+  attack: x
+  jump: c
+  pickup: x
+  skill_1: {key: a, cooldown: 6.3, priority: 1, desc: 旋风}
+  skill_2: {key: s, cooldown: 5.0, priority: 1, desc: 风暴}
+  skill_3: {key: d, cooldown: 9.0, priority: 1, desc: 龙卷风}
+  skill_4: {key: f, cooldown: 36.0, priority: 1, desc: 风刃}
+  skill_5: {key: g, cooldown: 40.5, priority: 1, desc: 飓风}
+  skill_6: {key: q, cooldown: 12.6, priority: 1, desc: 风之觉醒}
+  skill_7: {key: w, cooldown: 14.4, priority: 1, desc: 风压}
+  skill_8: {key: e, cooldown: 22.5, priority: 1, desc: 疾风}
+  skill_9: {key: r, cooldown: 40.5, priority: 1, desc: 风之守护}
+  skill_10: {key: t, cooldown: 45.0, priority: 1, desc: 风暴之眼}
+  skill_11: {key: v, cooldown: 162.0, priority: 1, desc: 突风}
+  awakening: {key: alt, cooldown: 135.0, priority: 1, desc: 风神之力}
+  buff_1: {combo: [right, right, space], cooldown: 180.0, priority: -1, desc: 风之气息}
+combo_chains:
+  - [attack, attack, skill_1]
+  - [skill_11, skill_2, skill_3]
+  - [skill_7, skill_8, skill_4]

@@ -36,6 +36,8 @@ class BaseClass(ABC):
         self.keys: Dict[str, str] = {}
         self.skills = SkillSet()
         self.combo_chains: List[List[str]] = config.get("combo_chains", [])
+        self.distance_x: int = config.get("distance_x", 300)
+        self.distance_y: int = config.get("distance_y", 100)
         self._load_skills(config)
 
     def _load_skills(self, cfg: Dict) -> None:
@@ -45,15 +47,19 @@ class BaseClass(ABC):
                 self.keys[name] = val
                 self.skills.add(Skill(name=name, key=val))
             elif isinstance(val, dict):
-                key = val["key"]
+                key = val.get("key", "")
+                combo = val.get("combo")
+                if not key and combo:
+                    key = combo[0]
                 self.keys[name] = key
                 self.skills.add(Skill(
                     name=name,
                     key=key,
                     cooldown=float(val.get("cooldown", 0.0)),
                     priority=int(val.get("priority", 0)),
-                    duration=float(val.get("duration", 0.04)),
+                    duration=float(val.get("duration", 0.06)),
                     description=val.get("desc", ""),
+                    combo=combo,
                 ))
 
     # ---- 工厂 ----
@@ -70,6 +76,10 @@ class BaseClass(ABC):
     def approach(self, direction: str, duration: float = 0.3) -> List[Action]:
         return [Move(direction=direction, duration=duration, tag="approach")]
 
+    def face_target(self, direction: str) -> List[Action]:
+        """极短方向点按，确保角色朝向目标（不产生可见位移）。"""
+        return [Move(direction=direction, duration=0.02, tag="face")]
+
     def use_skill(self, name: str) -> List[Action]:
         s = self.skills.get(name)
         if s is None or not s.ready():
@@ -83,13 +93,23 @@ class BaseClass(ABC):
     def get_attack_sequence(self, ctx: CombatContext) -> List[Action]: ...
 
     def get_buff_sequence(self) -> List[Action]:
-        """开局 buff；基类默认把所有 priority<0 的 buff 技能挨个按一遍。"""
+        """开局 buff；基类默认把所有 priority<0 的 buff 技能挨个按一遍。
+        如果技能配置了 combo（多键序列），则按 combo 依次按下。"""
         out: List[Action] = []
         for s in self.skills:
             if s.priority < 0 and s.ready():
                 s.trigger()
-                out.append(KeyPress(key=s.key, duration=s.duration, tag=f"buff:{s.name}"))
-                out.append(Wait(seconds=0.1))
+                if s.combo:
+                    out.append(Wait(seconds=0.2))  # 等角色站稳再开始搓招
+                    for i, k in enumerate(s.combo):
+                        out.append(KeyPress(key=k, duration=0.08,
+                                           tag=f"buff:{s.name}[{i}]"))
+                        # combo 键之间间隔稍长，防止吞键（→→ 变 →）
+                        out.append(Wait(seconds=0.12))
+                else:
+                    out.append(KeyPress(key=s.key, duration=s.duration,
+                                       tag=f"buff:{s.name}"))
+                    out.append(Wait(seconds=0.1))
         return out
 
 

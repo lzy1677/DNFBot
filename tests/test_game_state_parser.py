@@ -52,14 +52,14 @@ class TestGameStateParser:
         state = self.parser.parse([_det("monster")])
         assert state == GameState.COMBAT
 
-    def test_boss_triggers_boss_room_when_configured(self):
+    def test_boss_in_monster_classes_triggers_combat(self):
+        """Boss 房判断已移至 bot.py（地图驱动），parser 仅返回 COMBAT。"""
         parser = GameStateParser(ParserConfig(
             confirm_frames=1,
             monster_classes={"monster", "boss"},
-            boss_classes={"boss"},
         ))
         state = parser.parse([_det("boss")])
-        assert state == GameState.BOSS_ROOM
+        assert state == GameState.COMBAT
 
     def test_unknown_class_returns_navigating(self):
         state = self.parser.parse([_det("boss")])
@@ -69,13 +69,14 @@ class TestGameStateParser:
         state = self.parser.parse([_det("item")])
         assert state == GameState.LOOTING
 
-    def test_two_portals_triggers_portal_select(self):
+    def test_two_portals_triggers_portal(self):
         state = self.parser.parse([_det("portal"), _det("portal")])
-        assert state == GameState.PORTAL_SELECT
+        assert state == GameState.PORTAL
 
-    def test_one_portal_not_portal_select(self):
+    def test_one_portal_triggers_portal(self):
+        """单 portal 也触发 PORTAL（不再需要 ≥2）。"""
         state = self.parser.parse([_det("portal")])
-        assert state != GameState.PORTAL_SELECT
+        assert state == GameState.PORTAL
 
     def test_ui_button_triggers_result_screen(self):
         state = self.parser.parse([_det("ui_button")])
@@ -94,24 +95,26 @@ class TestGameStateParser:
         assert state == GameState.NAVIGATING
 
     def test_debounce_confirm_frames(self):
+        """用 LOOTING 测试 debounce（COMBAT 已绕过 debounce 直接切换）。"""
         parser = GameStateParser(ParserConfig(confirm_frames=3))
         # Frame 1 & 2: shouldn't confirm yet
-        parser.parse([_det("monster")])
+        parser.parse([_det("item")])
         assert parser.confirmed == GameState.UNKNOWN
-        parser.parse([_det("monster")])
+        parser.parse([_det("item")])
         assert parser.confirmed == GameState.UNKNOWN
         # Frame 3: now confirms
-        parser.parse([_det("monster")])
-        assert parser.confirmed == GameState.COMBAT
+        parser.parse([_det("item")])
+        assert parser.confirmed == GameState.LOOTING
 
     def test_debounce_resets_on_change(self):
-        parser = GameStateParser(ParserConfig(confirm_frames=3))
-        parser.parse([_det("monster")])
-        parser.parse([_det("monster")])
+        """用 PORTAL → LOOTING 测试 debounce 窗口重置（COMBAT 绕过 debounce）。"""
+        parser = GameStateParser(ParserConfig(confirm_frames=3, portal_classes={"portal"}))
+        parser.parse([_det("portal")])
+        parser.parse([_det("portal")])
         # Different detection breaks the streak
         parser.parse([_det("item")])
-        parser.parse([_det("monster")])
-        # Still only 1 consecutive combat frame
+        parser.parse([_det("portal")])
+        # Still only 1 consecutive portal frame
         assert parser.confirmed == GameState.UNKNOWN
 
     def test_reset_clears_window(self):

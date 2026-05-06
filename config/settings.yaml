@@ -20,7 +20,7 @@ detector:
 bot:
   loop_hz: 20            # 目标主循环频率
   safety_key: F12        # 紧急停止热键
-  character_class: berserker
+  character_class: wind_mage
   map: dungeon_01
 
 state_parser:
