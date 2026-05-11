@@ -79,7 +79,7 @@ rooms:
     name: 房间6
     minimap_xy: [0.63, 0.83]
     on_enter_skills:
-      wind_mage: [awakening]   # 进房固定释放 alt（风神之力）
+      wind_mage: [x]   # 进房固定释放 alt（风神之力）
     connections:
       - {id: 3, dir: up}
       - {id: 5, dir: left}

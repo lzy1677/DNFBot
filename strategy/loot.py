@@ -33,7 +33,7 @@ class LootStrategy(Strategy):
         self.reach_px = reach_px
         self._last_item_pos: Optional[Tuple[float, float]] = None
         self._stuck_count: int = 0
-        self._detour_phase: int = 0   # 0=直行, 1=绕行1, 2=绕行2
+        self._detour_phase: int = 0   # 0=直行, 1/2/3=绕行三步, 4+=重新寻路
 
     def decide(self, ctx: StrategyContext) -> List[Action]:
         items = [d for d in ctx.detections if d.class_name in ITEM_CLASSES]
@@ -79,54 +79,37 @@ class LootStrategy(Strategy):
 
         # 连续卡住 → 绕行
         if self._stuck_count >= _STUCK_THRESHOLD:
-            return self._detour_move(dx, dy)
+            return self._detour_move(dx, dy, px, ctx.frame_shape[1])
 
         # 正常接近
         return [self._make_move(dx, dy)]
 
-    def _detour_move(self, dx: float, dy: float) -> List[Action]:
-        """绕行：先退后 + 横移创造空间，再从侧面斜向接近。
+    def _detour_move(self, dx: float, dy: float, px: float, frame_width: int) -> List[Action]:
+        """绕行：判断人物在画面左半/右半，向远离墙壁方向绕开障碍物后重新寻路。
 
-        Phase 1 反向远离物品（避免直冲障碍物），
-        Phase 2 从侧面斜向接近物品。
-        斜向移动解决纯横移无法越过不规则突起的问题。
+        左半 → 被左侧墙壁突起卡住 → 向右绕行
+        右半 → 被右侧墙壁突起卡住 → 向左绕行
         """
-        vertical_primary = abs(dy) > abs(dx)
-        h_to = "right" if dx > 0 else "left"
-        v_to = "down" if dy > 0 else "up"
-        h_away = "left" if dx > 0 else "right"
-        v_away = "up" if dy > 0 else "down"
+        on_left = px < frame_width / 2
+        h_escape = "right" if on_left else "left"
 
         if self._detour_phase == 0:
             self._detour_phase = 1
-            if vertical_primary:
-                # 横移方向：dx 模糊时默认向右（避开左侧墙体）
-                if abs(dx) < 15:
-                    h_dodge = "right"
-                else:
-                    h_dodge = "right" if dx > 0 else "left"
-                d = f"{h_dodge},{v_away}"   # 横移 + 后退
-            else:
-                if abs(dy) < 15:
-                    v_dodge = "down"
-                else:
-                    v_dodge = "down" if dy > 0 else "up"
-                d = f"{h_away},{v_dodge}"   # 后退 + 纵移
-            return [Move(direction=d, duration=0.5, tag="loot_detour1")]
+            v_away = "down" if dy < 0 else "up"
+            return [Move(direction=v_away, duration=0.5, tag="loot_detour1")]
 
         if self._detour_phase == 1:
             self._detour_phase = 2
-            if vertical_primary:
-                h_dodge = "left" if dx > 0 else "right"
-                d = f"{h_dodge},{v_to}"     # 反向横移 + 前进
-            else:
-                v_dodge = "up" if dy > 0 else "down"
-                d = f"{h_to},{v_dodge}"     # 前进 + 反向纵移
-            return [Move(direction=d, duration=0.5, tag="loot_detour2")]
+            return [Move(direction=h_escape, duration=1.0, tag="loot_detour2")]
 
-        # 两次绕行都失败 → 放弃此物品
+        if self._detour_phase == 2:
+            self._detour_phase = 3
+            v_toward = "up" if dy < 0 else "down"
+            return [Move(direction=v_toward, duration=1.0, tag="loot_detour3")]
+
+        # 绕行完成，正常寻路
         self._reset_stuck()
-        return []
+        return [self._make_move(dx, dy)]
 
     def _reset_stuck(self) -> None:
         self._last_item_pos = None

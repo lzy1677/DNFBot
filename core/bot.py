@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Set
 
 import numpy as np
 
-from action.action_queue import ActionQueue, Wait
+from action.action_queue import ActionQueue, Move, Wait
 from action.input_driver import InputDriver
 from classes.base_class import BaseClass, build_class
 from core.event_bus import EventBus
@@ -96,6 +96,8 @@ class GameBot:
         self._room_skill_triggered: Set[int] = set()
         # skip_dungeon 模式下，首次 tick 强制检查进房技能
         self._check_room_skills_once = False
+        # 房间2隐藏怪物检测：记录进入房间2的时间
+        self._room_2_entered_at: float = 0.0
         # 最新一帧 YOLO 检测结果（供心跳日志统计）
         self._last_detections: List[Detection] = []
         # 传送门待确认的下一房间号（PORTAL 时设定，LOADING→房间后应用，防止重复推进）
@@ -379,6 +381,22 @@ class GameBot:
                     self.d.bus.emit("state_change", GameState.IN_ROOM)
                     self._on_state_enter(GameState.IN_ROOM)
 
+        # 房间2隐藏怪物检测：持续1分钟未切换房间 → 向右清扫
+        if self.d.game_map is not None:
+            cur_id = self.d.game_map.current_id
+            if cur_id == 2:
+                now = time.monotonic()
+                if self._room_2_entered_at == 0.0:
+                    self._room_2_entered_at = now
+                elif now - self._room_2_entered_at > 60.0:
+                    log.info("[room2] 房间2持续1分钟未切换，认定隐藏怪物，向右清扫3秒")
+                    self._room_2_entered_at = now
+                    self.d.queue.clear()
+                    self.d.queue.submit([Move(direction="right", duration=3.0,
+                                              tag="hidden_monster_sweep")])
+            else:
+                self._room_2_entered_at = 0.0
+
         # skip-dungeon 模式首次 tick：检查初始房间是否有进房技能
         if self._check_room_skills_once and self.d.state.current == GameState.IN_ROOM:
             self._check_room_skills_once = False
@@ -422,6 +440,7 @@ class GameBot:
             self._buffed_once = False
             self._room_skill_triggered.clear()
             self._pending_next_room = None
+            self._room_2_entered_at = 0.0
             self.d.character.skills.reset_all()
             if self.d.game_map:
                 self.d.game_map.set_current(self.d.game_map.start_id)
